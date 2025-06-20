@@ -7,6 +7,6 @@ ffmpeg-python
 scikit-image
 scipy
 colorama
-tensorflow==2.19.0
+tensorflow[and-cuda]==2.19.0
 pyqt5
 tf2onnx

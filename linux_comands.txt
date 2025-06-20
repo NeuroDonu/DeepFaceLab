@@ -1,0 +1,1 @@
+sudo apt install -y qtbase5-dev qt5-qmake libqt5gui5 libqt5widgets5 libqt5dbus5 libxkbcommon-x11-0 libgl1-mesa-glx libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
