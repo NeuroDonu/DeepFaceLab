@@ -26,6 +26,13 @@ import numpy as np
 from core.interact import interact as io
 from .device import Devices
 
+try:
+    from tensorflow.contrib import tpu
+    from tensorflow.contrib.cluster_resolver import TPUClusterResolver
+    TF_TPU_SUPPORT = True
+except:
+    TF_TPU_SUPPORT = False
+
 
 class nn():
     current_DeviceConfig = None
@@ -34,6 +41,7 @@ class nn():
     tf_sess = None
     tf_sess_config = None
     tf_default_device_name = None
+    is_tpu_strategy = False
     
     data_format = None
     conv2d_ch_axis = None
@@ -48,6 +56,9 @@ class nn():
             if device_config is None:
                 device_config = nn.getCurrentDeviceConfig()
             nn.setCurrentDeviceConfig(device_config)
+
+            is_tpu = len(device_config.devices) > 0 and device_config.devices[0].tf_dev_type == 'TPU'
+            nn.is_tpu_strategy = is_tpu
 
             # Manipulate environment variables before import tensorflow
 
@@ -101,7 +112,15 @@ class nn():
             import core.leras.archis
             
             # Configure tensorflow session-config
-            if len(device_config.devices) == 0:
+            tpu_cluster_resolver = None
+            if is_tpu:
+                io.log_info(f"Initializing TPU session for {device_config.devices[0].name}...")
+                if not TF_TPU_SUPPORT:
+                    raise Exception("Tensorflow has no TPU support.")
+                tpu_cluster_resolver = TPUClusterResolver(tpu=[device_config.devices[0].name]).get_master()
+                config = tf.ConfigProto()
+                nn.tf_default_device_name = '/TPU:0'
+            elif len(device_config.devices) == 0:
                 config = tf.ConfigProto(device_count={'GPU': 0})
                 nn.tf_default_device_name = '/CPU:0'
             else:
@@ -115,7 +134,12 @@ class nn():
             nn.tf_sess_config = config
             
         if nn.tf_sess is None:
-            nn.tf_sess = tf.Session(config=nn.tf_sess_config)
+            session_target = tpu_cluster_resolver if nn.is_tpu_strategy else ''
+            nn.tf_sess = nn.tf.Session(target=session_target, config=nn.tf_sess_config)
+            if nn.is_tpu_strategy:
+                io.log_info("Initializing TPU system...")
+                nn.tf_sess.run(tpu.initialize_system())
+                io.log_info("TPU system initialized.")
 
         if floatx == "float32":
             floatx = nn.tf.float32
@@ -193,6 +217,11 @@ class nn():
     @staticmethod
     def close_session():
         if nn.tf_sess is not None:
+            if nn.is_tpu_strategy:
+                io.log_info("Shutting down TPU system...")
+                nn.tf_sess.run(tpu.shutdown_system())
+                io.log_info("TPU system shut down.")
+
             nn.tf.reset_default_graph()
             nn.tf_sess.close()
             nn.tf_sess = None
@@ -298,3 +327,27 @@ class nn():
         @staticmethod
         def CPU():
             return nn.DeviceConfig([])
+
+        @staticmethod
+        def TPU():
+            devices = Devices.getDevices().get_devices_by_tf_dev_type('TPU')
+            if len(devices) == 0:
+                raise Exception("TPU not found.")
+            return nn.DeviceConfig( [devices[0]] )
+
+    @staticmethod
+    def tpu_rewrite(computation_function, inputs):
+        if not nn.is_tpu_strategy:
+            raise Exception("This function can only be used with a TPU strategy.")
+        if not TF_TPU_SUPPORT:
+            raise Exception("TPU support is not available in your tensorflow installation.")
+        return tpu.rewrite(computation_function, inputs)
+
+    @staticmethod
+    def tpu_optimizer(optimizer):
+        if not nn.is_tpu_strategy:
+            return optimizer
+        if not TF_TPU_SUPPORT:
+            raise Exception("TPU support is not available in your tensorflow installation.")
+        io.log_info("Wrapping optimizer with CrossShardOptimizer.")
+        return tpu.CrossShardOptimizer(optimizer)

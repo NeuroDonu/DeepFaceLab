@@ -30,6 +30,7 @@ class SAEHDModel(ModelBase):
         min_res = 64
         max_res = 640
 
+        default_use_tpu            = self.options['use_tpu']            = self.load_or_def_option('use_tpu', False)
         #default_usefp16            = self.options['use_fp16']           = self.load_or_def_option('use_fp16', False)
         default_resolution         = self.options['resolution']         = self.load_or_def_option('resolution', 128)
         default_face_type          = self.options['face_type']          = self.load_or_def_option('face_type', 'f')
@@ -69,6 +70,7 @@ class SAEHDModel(ModelBase):
             self.ask_random_src_flip()
             self.ask_random_dst_flip()
             self.ask_batch_size(suggest_batch_size)
+            self.options['use_tpu'] = io.input_bool ("Use TPU?", default_use_tpu, help_message="Use TPU for training. Requires TensorFlow 1.x with TPU support and correctly configured environment (TPU_NAME). Disables some options.")
             #self.options['use_fp16'] = io.input_bool ("Use fp16", default_usefp16, help_message='Increases training/inference speed, reduces model size. Model may crash. Enable it after 1-5k iters.')
 
         if self.is_first_run():
@@ -157,7 +159,7 @@ Examples: df, liae, df-d, df-ud, liae-ud, ...
 
             self.options['gan_power'] = np.clip ( io.input_number ("GAN power", default_gan_power, add_info="0.0 .. 5.0", help_message="Forces the neural network to learn small details of the face. Enable it only when the face is trained enough with lr_dropout(on) and random_warp(off), and don't disable. The higher the value, the higher the chances of artifacts. Typical fine value is 0.1"), 0.0, 5.0 )
 
-            if self.options['gan_power'] != 0.0:
+            if self.options['gan_power'] != 0:
                 gan_patch_size = np.clip ( io.input_int("GAN patch size", default_gan_patch_size, add_info="3-640", help_message="The higher patch size, the higher the quality, the more VRAM is required. You can get sharper edges even at the lowest setting. Typical fine value is resolution / 8." ), 3, 640 )
                 self.options['gan_patch_size'] = gan_patch_size
 
@@ -186,10 +188,18 @@ Examples: df, liae, df-d, df-ud, liae-ud, ...
 
     #override
     def on_initialize(self):
-        device_config = nn.getCurrentDeviceConfig()
+        use_tpu = self.options['use_tpu']
+
+        if use_tpu:
+            device_config = nn.DeviceConfig.TPU()
+        else:
+            device_config = nn.getCurrentDeviceConfig()
+
         devices = device_config.devices
         self.model_data_format = "NCHW" if len(devices) != 0 and not self.is_debug() else "NHWC"
-        nn.initialize(data_format=self.model_data_format)
+
+        nn.initialize(device_config=device_config, data_format=self.model_data_format)
+
         tf = nn.tf
 
         self.resolution = resolution = self.options['resolution']
@@ -243,13 +253,22 @@ Examples: df, liae, df-d, df-ud, liae-ud, ...
             self.options_show_override['bg_style_power'] = 0.0
             self.options_show_override['uniform_yaw'] = True
 
+        if use_tpu:
+            self.options['lr_dropout'] = 'n'
+            self.options['gan_power'] = 0.0
+            self.options['face_style_power'] = 0.0
+            self.options['bg_style_power'] = 0.0
+            self.options['true_face_power'] = 0.0
+            self.options_show_override = self.options.copy()
+
+
         masked_training = self.options['masked_training']
         ct_mode = self.options['ct_mode']
         if ct_mode == 'none':
             ct_mode = None
+        self.true_face_power = true_face_power = 0.0 if self.pretrain else self.options['true_face_power']
 
-
-        models_opt_on_gpu = False if len(devices) == 0 else self.options['models_opt_on_gpu']
+        models_opt_on_gpu = False if use_tpu else self.options['models_opt_on_gpu']
         models_opt_device = nn.tf_default_device_name if models_opt_on_gpu and self.is_training else '/CPU:0'
         optimizer_vars_on_cpu = models_opt_device=='/CPU:0'
 
@@ -697,6 +716,44 @@ Examples: df, liae, df-d, df-ud, liae-ud, ...
             if self.pretrain_just_disabled:
                 self.update_sample_for_preview(force_new=True)
 
+        if self.is_first_run() or self.pretrain_just_disabled:
+            if adabelief:
+                self.optimizer = nn.tf.train.AdamOptimizer(learning_rate=self.learning_rate_placeholder, beta1=0.9, beta2=0.999, epsilon=1e-8)
+            else:
+                self.optimizer = nn.tf.train.AdamOptimizer(learning_rate=self.learning_rate_placeholder, beta1=0.9, beta2=0.999)
+
+            if use_tpu:
+                self.optimizer = nn.tpu_optimizer(self.optimizer)
+
+            self.ae_opt      = self.optimizer
+            self.g_opt       = self.optimizer
+            self.d_opt       = self.optimizer
+
+        self.ae_loss_op = tf.reduce_mean(self.ae_loss, name='ae_loss_op')
+        self.ae_train_op = self.ae_opt.minimize( self.ae_loss_op, var_list=self.ae_vars )
+
+        self.g_loss_all = tf.reduce_mean(self.g_loss, name='g_loss')
+        self.d_loss_all = tf.reduce_mean(self.d_loss, name='d_loss')
+        self.g_train_op = self.g_opt.minimize( self.g_loss_all, var_list=self.g_vars )
+        self.d_train_op = self.d_opt.minimize( self.d_loss_all, var_list=self.d_vars )
+
+        if use_tpu:
+            io.log_info("Compiling model for TPU...")
+            def train_step_gan():
+                return self.g_train_op, self.d_train_op
+
+            def train_step_ae():
+                return self.ae_train_op,
+
+            # Create placeholders for TPU rewrite
+            tpu_placeholders = [self.warped_src_placeholder, self.warped_dst_placeholder,
+                              self.target_src_placeholder, self.target_srcm_placeholder,
+                              self.target_dst_placeholder, self.target_dstm_placeholder]
+
+            self.train_op_gan = nn.tpu_rewrite(train_step_gan, tpu_placeholders)
+            self.train_op_ae = nn.tpu_rewrite(train_step_ae, tpu_placeholders)
+            io.log_info("Model compiled.")
+
     def export_dfm (self):
         output_path=self.get_strpath_storage_for_file('model.dfm')
 
@@ -765,21 +822,34 @@ Examples: df, liae, df-d, df-ud, liae-ud, ...
 
     #override
     def onTrainOneIter(self):
-        if self.get_iter() == 0 and not self.pretrain and not self.pretrain_just_disabled:
-            io.log_info('You are training the model from scratch. It is strongly recommended to use a pretrained model to speed up the training and improve the quality.\n')
+        use_tpu = self.options['use_tpu']
+        feed_dict = {}
 
-        ( (warped_src, target_src, target_srcm, target_srcm_em), \
+        ( (warped_src, target_src, target_srcm, target_srcm_em),
           (warped_dst, target_dst, target_dstm, target_dstm_em) ) = self.generate_next_samples()
 
-        src_loss, dst_loss = self.src_dst_train (warped_src, target_src, target_srcm, target_srcm_em, warped_dst, target_dst, target_dstm, target_dstm_em)
+        feed_dict[self.warped_src_placeholder] = warped_src
+        feed_dict[self.warped_dst_placeholder] = warped_dst
+        feed_dict[self.target_src_placeholder] = target_src
+        feed_dict[self.target_srcm_placeholder] = target_srcm
+        feed_dict[self.target_dst_placeholder] = target_dst
+        feed_dict[self.target_dstm_placeholder] = target_dstm
+        feed_dict[self.learning_rate_placeholder] = self.get_learning_rate()
 
-        if self.options['true_face_power'] != 0 and not self.pretrain:
-            self.D_train (warped_src, warped_dst)
-
-        if self.gan_power != 0:
-            self.D_src_dst_train (warped_src, target_src, target_srcm, target_srcm_em, warped_dst, target_dst, target_dstm, target_dstm_em)
-
-        return ( ('src_loss', np.mean(src_loss) ), ('dst_loss', np.mean(dst_loss) ), )
+        if use_tpu:
+            if self.options['true_face_power'] != 0:
+                 _, g_loss, d_loss = nn.tf_sess.run ( [self.train_op_gan, self.g_loss_all, self.d_loss_all], feed_dict=feed_dict )
+                 return ( (g_loss, d_loss), )
+            else:
+                 _, ae_loss = nn.tf_sess.run ( [self.train_op_ae, self.ae_loss_op], feed_dict=feed_dict )
+                 return ( (ae_loss,), )
+        else: # Not on TPU
+            if self.options['true_face_power'] != 0:
+                _, g_loss, d_loss = nn.tf_sess.run ( [self.g_train_op, self.g_loss_all, self.d_loss_all], feed_dict=feed_dict )
+                return ( (g_loss, d_loss), )
+            else:
+                _, ae_loss = nn.tf_sess.run ( [self.ae_train_op, self.ae_loss_op], feed_dict=feed_dict )
+                return ( (ae_loss,), )
 
     #override
     def onGetPreview(self, samples, for_history=False):

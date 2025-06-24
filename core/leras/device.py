@@ -7,6 +7,13 @@ import time
 from pathlib import Path
 from core.interact import interact as io
 
+try:
+    from tensorflow.contrib import tpu
+    from tensorflow.contrib.cluster_resolver import TPUClusterResolver
+    TF_TPU_SUPPORT = True
+except:
+    TF_TPU_SUPPORT = False
+
 
 class Device(object):
     def __init__(self, index, tf_dev_type, name, total_mem, free_mem):
@@ -89,6 +96,13 @@ class Devices(object):
                 result.append (device)
         return Devices(result)
 
+    def get_devices_by_tf_dev_type(self, tf_dev_type):
+        result = []
+        for device in self.devices:
+            if device.tf_dev_type == tf_dev_type:
+                result.append(device)
+        return Devices(result)
+
     @staticmethod
     def _get_tf_devices_proc(q : multiprocessing.Queue):
         
@@ -156,6 +170,17 @@ class Devices(object):
     @staticmethod
     def initialize_main_env():
         if int(os.environ.get("NN_DEVICES_INITIALIZED", 0)) != 0:
+            return
+
+        if TF_TPU_SUPPORT and 'TPU_NAME' in os.environ:
+            tpu_name = os.environ.get('TPU_NAME')
+            io.log_info(f"TPU '{tpu_name}' found. Initializing.")
+            os.environ['NN_DEVICES_INITIALIZED'] = '1'
+            os.environ['NN_DEVICES_COUNT'] = '1'
+            os.environ[f'NN_DEVICE_0_TF_DEV_TYPE'] = 'TPU'
+            os.environ[f'NN_DEVICE_0_NAME'] = tpu_name
+            os.environ[f'NN_DEVICE_0_TOTAL_MEM'] = str(8 * 1024**3)
+            os.environ[f'NN_DEVICE_0_FREE_MEM'] = str(8 * 1024**3)
             return
             
         if 'CUDA_VISIBLE_DEVICES' in os.environ.keys():
