@@ -1,0 +1,18 @@
+
+--find-links https://storage.googleapis.com/libtpu-tf-releases/index.html
+
+tensorflow==2.18.0
+tensorflow-tpu==2.18.0
+
+numpy==1.26.4
+numexpr
+h5py
+scipy
+opencv-python
+ffmpeg-python
+scikit-image
+
+tqdm
+colorama
+tf2onnx
+pyqt5
