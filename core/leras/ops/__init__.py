@@ -1,37 +1,30 @@
 import numpy as np
 from core.leras import nn
 tf = nn.tf
-from tensorflow.python.ops import array_ops, random_ops, math_ops, sparse_ops, gradients
-from tensorflow.python.framework import sparse_tensor
 
 def tf_get_value(tensor):
-    return nn.tf_sess.run (tensor)
+    # TensorFlow 2.x eager execution - direct evaluation
+    return tensor.numpy() if hasattr(tensor, 'numpy') else tensor
 nn.tf_get_value = tf_get_value
 
 
 def batch_set_value(tuples):
     if len(tuples) != 0:
         with nn.tf.device('/CPU:0'):
-            assign_ops = []
-            feed_dict = {}
-
             for x, value in tuples:
-                if isinstance(value, nn.tf.Operation) or \
-                    isinstance(value, nn.tf.Variable):
-                    assign_ops.append(value)
+                if isinstance(value, nn.tf.Operation):
+                    # For operations, just skip
+                    pass
+                elif isinstance(value, nn.tf.Variable):
+                    # For variables, assign directly
+                    x.assign(value)
                 else:
+                    # For regular values, convert and assign
                     value = np.asarray(value, dtype=x.dtype.as_numpy_dtype)
-                    assign_placeholder = nn.tf.placeholder( x.dtype.base_dtype, shape=[None]*value.ndim )
-                    assign_op = nn.tf.assign (x, assign_placeholder )
-                    assign_ops.append(assign_op)
-                    feed_dict[assign_placeholder] = value
-
-            nn.tf_sess.run(assign_ops, feed_dict=feed_dict)
+                    x.assign(value)
 nn.batch_set_value = batch_set_value
 
 def init_weights(weights):
-    ops = []
-
     ca_tuples_w = []
     ca_tuples = []
     for w in weights:
@@ -42,17 +35,17 @@ def init_weights(weights):
                 ca_tuples.append ( (w.shape.as_list(), w.dtype.as_numpy_dtype) )
                 break
         else:
-            ops.append (initializer)
-
-    if len(ops) != 0:
-        nn.tf_sess.run (ops)
+            # TensorFlow 2.x eager execution - initializers execute immediately
+            if hasattr(initializer, '__call__'):
+                initializer()
 
     if len(ca_tuples) != 0:
         nn.batch_set_value( [*zip(ca_tuples_w, nn.initializers.ca.generate_batch (ca_tuples))] )
 nn.init_weights = init_weights
 
 def tf_gradients ( loss, vars ):
-    grads = gradients.gradients(loss, vars, colocate_gradients_with_ops=True )
+    # TensorFlow 2.x - use tf.gradients() from public API
+    grads = tf.gradients(loss, vars, colocate_gradients_with_ops=True )
     gv = [*zip(grads,vars)]
     for g,v in gv:
         if g is None:
@@ -109,22 +102,22 @@ nn.gelu = gelu
 def upsample2d(x, size=2):
     if nn.data_format == "NCHW":
         x = tf.transpose(x, (0,2,3,1))
-        x = tf.image.resize_nearest_neighbor(x, (x.shape[1]*size, x.shape[2]*size) )
+        x = tf.image.resize(x, (x.shape[1]*size, x.shape[2]*size), method='nearest' )
         x = tf.transpose(x, (0,3,1,2))
-        
-        
+
+
         # b,c,h,w = x.shape.as_list()
         # x = tf.reshape (x, (-1,c,h,1,w,1) )
         # x = tf.tile(x, (1,1,1,size,1,size) )
         # x = tf.reshape (x, (-1,c,h*size,w*size) )
         return x
     else:
-        return tf.image.resize_nearest_neighbor(x, (x.shape[1]*size, x.shape[2]*size) )
+        return tf.image.resize(x, (x.shape[1]*size, x.shape[2]*size), method='nearest' )
 nn.upsample2d = upsample2d
 
 def resize2d_bilinear(x, size=2):
-    h = x.shape[nn.conv2d_spatial_axes[0]].value
-    w = x.shape[nn.conv2d_spatial_axes[1]].value
+    h = x.shape[nn.conv2d_spatial_axes[0]]
+    w = x.shape[nn.conv2d_spatial_axes[1]]
 
     if nn.data_format == "NCHW":
         x = tf.transpose(x, (0,2,3,1))
@@ -156,8 +149,8 @@ def resize2d_nearest(x, size=2):
             x = x[:,::-size,::-size,:]
     return x
 
-    h = x.shape[nn.conv2d_spatial_axes[0]].value
-    w = x.shape[nn.conv2d_spatial_axes[1]].value
+    h = x.shape[nn.conv2d_spatial_axes[0]]
+    w = x.shape[nn.conv2d_spatial_axes[1]]
 
     if nn.data_format == "NCHW":
         x = tf.transpose(x, (0,2,3,1))
@@ -179,15 +172,15 @@ def flatten(x):
     if nn.data_format == "NHWC":
         # match NCHW version in order to switch data_format without problems
         x = tf.transpose(x, (0,3,1,2) )
-    return tf.reshape (x, (-1, np.prod(x.shape[1:])) )
+    return tf.reshape (x, (-1, int(np.prod(x.shape[1:]))) )
 
 nn.flatten = flatten
 
 def max_pool(x, kernel_size=2, strides=2):
     if nn.data_format == "NHWC":
-        return tf.nn.max_pool(x, [1,kernel_size,kernel_size,1], [1,strides,strides,1], 'SAME', data_format=nn.data_format)
+        return tf.nn.max_pool2d(x, [1,kernel_size,kernel_size,1], [1,strides,strides,1], 'SAME', data_format=nn.data_format)
     else:
-        return tf.nn.max_pool(x, [1,1,kernel_size,kernel_size], [1,1,strides,strides], 'SAME', data_format=nn.data_format)
+        return tf.nn.max_pool2d(x, [1,1,kernel_size,kernel_size], [1,1,strides,strides], 'SAME', data_format=nn.data_format)
 
 nn.max_pool = max_pool
 
@@ -207,9 +200,9 @@ def random_binomial(shape, p=0.0, dtype=None, seed=None):
 
     if seed is None:
         seed = np.random.randint(10e6)
-    return array_ops.where(
-        random_ops.random_uniform(shape, dtype=tf.float16, seed=seed) < p,
-             array_ops.ones(shape, dtype=dtype), array_ops.zeros(shape, dtype=dtype))
+    return tf.where(
+        tf.random.uniform(shape, dtype=tf.float16, seed=seed) < p,
+             tf.ones(shape, dtype=dtype), tf.zeros(shape, dtype=dtype))
 nn.random_binomial = random_binomial
 
 def gaussian_blur(input, radius=2.0):
@@ -250,12 +243,12 @@ def style_loss(target, style, gaussian_blur_radius=0.0, loss_weight=1.0, step_si
         style_nc = style.shape[nn.conv2d_ch_axis]
         if content_nc != style_nc:
             raise Exception("style_loss() content_nc != style_nc")
-        c_mean, c_var = tf.nn.moments(content, axes=nn.conv2d_spatial_axes, keep_dims=True)
-        s_mean, s_var = tf.nn.moments(style, axes=nn.conv2d_spatial_axes, keep_dims=True)
+        c_mean, c_var = tf.nn.moments(content, axes=nn.conv2d_spatial_axes, keepdims=True)
+        s_mean, s_var = tf.nn.moments(style, axes=nn.conv2d_spatial_axes, keepdims=True)
         c_std, s_std = tf.sqrt(c_var + 1e-5), tf.sqrt(s_var + 1e-5)
         mean_loss = tf.reduce_sum(tf.square(c_mean-s_mean), axis=[1,2,3])
         std_loss  = tf.reduce_sum(tf.square(c_std-s_std), axis=[1,2,3])
-        return (mean_loss + std_loss) * ( loss_weight / content_nc.value )
+        return (mean_loss + std_loss) * ( loss_weight / content_nc )
 
     if gaussian_blur_radius > 0.0:
         target = gaussian_blur(target, gaussian_blur_radius)
@@ -342,7 +335,7 @@ def depth_to_space(x, size):
     else:
         cfg = nn.getCurrentDeviceConfig()
         if not cfg.cpu_only:
-            return tf.depth_to_space(x, size, data_format=nn.data_format)
+            return tf.nn.depth_to_space(x, size, data_format=nn.data_format)
         b,c,h,w = x.shape.as_list()
         oh, ow = h * size, w * size
         oc = c // (size * size)
@@ -397,7 +390,7 @@ nn.total_variation_mse = total_variation_mse
 
 
 def pixel_norm(x, axes):
-    return x * tf.rsqrt(tf.reduce_mean(tf.square(x), axis=axes, keepdims=True) + 1e-06)
+    return x * tf.math.rsqrt(tf.reduce_mean(tf.square(x), axis=axes, keepdims=True) + 1e-06)
 nn.pixel_norm = pixel_norm
         
 """

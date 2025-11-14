@@ -20,10 +20,33 @@ class AdaIN(nn.LayerBase):
         if kernel_initializer is None:
             kernel_initializer = tf.initializers.he_normal()
 
-        self.weight1   = tf.get_variable("weight1", (self.mlp_ch, self.in_ch), dtype=self.dtype, initializer=kernel_initializer)
-        self.bias1     = tf.get_variable("bias1",   (self.in_ch,), dtype=self.dtype, initializer=tf.initializers.zeros())
-        self.weight2   = tf.get_variable("weight2", (self.mlp_ch, self.in_ch), dtype=self.dtype, initializer=kernel_initializer)
-        self.bias2     = tf.get_variable("bias2",   (self.in_ch,), dtype=self.dtype, initializer=tf.initializers.zeros())
+        # Create weight1 variable
+        weight1_shape = (self.mlp_ch, self.in_ch)
+        weight1_init = kernel_initializer(weight1_shape)
+
+        with tf.name_scope(self.name):
+            self.weight1 = tf.Variable(weight1_init, dtype=self.dtype, trainable=True, name="weight1")
+
+        # Create bias1 variable
+        bias1_shape = (self.in_ch,)
+        bias1_init = tf.initializers.zeros()(bias1_shape)
+
+        with tf.name_scope(self.name):
+            self.bias1 = tf.Variable(bias1_init, dtype=self.dtype, trainable=True, name="bias1")
+
+        # Create weight2 variable
+        weight2_shape = (self.mlp_ch, self.in_ch)
+        weight2_init = kernel_initializer(weight2_shape)
+
+        with tf.name_scope(self.name):
+            self.weight2 = tf.Variable(weight2_init, dtype=self.dtype, trainable=True, name="weight2")
+
+        # Create bias2 variable
+        bias2_shape = (self.in_ch,)
+        bias2_init = tf.initializers.zeros()(bias2_shape)
+
+        with tf.name_scope(self.name):
+            self.bias2 = tf.Variable(bias2_init, dtype=self.dtype, trainable=True, name="bias2")
 
     def get_weights(self):
         return [self.weight1, self.bias1, self.weight2, self.bias2]

@@ -21,22 +21,19 @@ class Saveable():
         weights = self.get_weights()
         if len(weights) == 0:
             return []
-        return nn.tf_sess.run (weights)
+        # TF 2.x eager execution: convert variables directly to numpy
+        return [w.numpy() for w in weights]
 
     def set_weights(self, new_weights):
         weights = self.get_weights()
         if len(weights) != len(new_weights):
             raise ValueError ('len of lists mismatch')
 
-        tuples = []
+        # TF 2.x eager execution: use .assign() instead of batch_set_value
         for w, new_w in zip(weights, new_weights):
-
             if len(w.shape) != new_w.shape:
                 new_w = new_w.reshape(w.shape)
-
-            tuples.append ( (w, new_w) )
-
-        nn.batch_set_value (tuples)
+            w.assign(new_w)
 
     def save_weights(self, filename, force_dtype=None):
         d = {}
@@ -48,7 +45,8 @@ class Saveable():
         name = self.name
 
         for w in weights:
-            w_val = nn.tf_sess.run (w).copy()
+            # TF 2.x eager execution: use .numpy() instead of tf_sess.run()
+            w_val = w.numpy().copy()
             w_name_split = w.name.split('/', 1)
             if name != w_name_split[0]:
                 raise Exception("weight first name != Saveable.name")
@@ -79,7 +77,7 @@ class Saveable():
             raise Exception("name must be defined.")
 
         try:
-            tuples = []
+            # TF 2.x eager execution: use .assign() instead of batch_set_value
             for w in weights:
                 w_name_split = w.name.split('/')
                 if self.name != w_name_split[0]:
@@ -89,14 +87,12 @@ class Saveable():
 
                 w_val = d.get(sub_w_name, None)
 
-                if w_val is None:
-                    #io.log_err(f"Weight {w.name} was not loaded from file {filename}")
-                    tuples.append ( (w, w.initializer) )
-                else:
+                if w_val is not None:
+                    # Load and assign the weight value
                     w_val = np.reshape( w_val, w.shape.as_list() )
-                    tuples.append ( (w, w_val) )
-
-            nn.batch_set_value(tuples)
+                    w.assign(w_val)
+                # If w_val is None, skip (weight not found in file, keep current value)
+                # In TF 2.x eager mode, variables are already initialized, no need for w.initializer
         except:
             return False
 

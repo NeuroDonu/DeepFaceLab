@@ -7,7 +7,7 @@ based on pure tensorflow without keras.
 
 Provides:
 + full freedom of tensorflow operations without keras model's restrictions
-+ easy model operations like in PyTorch, but in graph mode (no eager execution)
++ easy model operations like in PyTorch with eager execution
 + convenient and understandable logic
 
 Reasons why we cannot import tensorflow or any tensorflow.sub modules right here:
@@ -15,6 +15,8 @@ Reasons why we cannot import tensorflow or any tensorflow.sub modules right here
 2) multiprocesses will import tensorflow every spawn
 
 NCHW speed up training for 10-20%.
+
+Updated for TensorFlow 2.x with eager execution.
 """
 
 import os
@@ -31,16 +33,14 @@ class nn():
     current_DeviceConfig = None
 
     tf = None
-    tf_sess = None
-    tf_sess_config = None
     tf_default_device_name = None
-    
+
     data_format = None
     conv2d_ch_axis = None
     conv2d_spatial_axes = None
 
     floatx = None
-    
+
     @staticmethod
     def initialize(device_config=None, floatx="float32", data_format="NHWC"):
 
@@ -67,30 +67,44 @@ class nn():
                         first_run = True
                         compute_cache_path.mkdir(parents=True, exist_ok=True)
                     os.environ['CUDA_CACHE_PATH'] = str(compute_cache_path)
-            
+
             if first_run:
                 io.log_info("Caching GPU kernels...")
 
-            import tensorflow
-
-            tf_version = tensorflow.version.VERSION
-            #if tf_version is None:
-            #    tf_version = tensorflow.version.GIT_VERSION
-            if tf_version[0] == 'v':
-                tf_version = tf_version[1:]
-            if tf_version[0] == '2':
-                tf = tensorflow.compat.v1
-            else:
-                tf = tensorflow
+            import tensorflow as tf
 
             import logging
             # Disable tensorflow warnings
             tf_logger = logging.getLogger('tensorflow')
             tf_logger.setLevel(logging.ERROR)
-            
-            if tf_version[0] == '2':
-                tf.disable_v2_behavior()
+
             nn.tf = tf
+
+            # Configure GPU settings for TF 2.x
+            gpus = tf.config.list_physical_devices('GPU')
+
+            if len(device_config.devices) == 0:
+                # CPU only mode
+                tf.config.set_visible_devices([], 'GPU')
+                nn.tf_default_device_name = '/CPU:0'
+            else:
+                # GPU mode
+                visible_gpus = []
+                for device in device_config.devices:
+                    if device.index < len(gpus):
+                        visible_gpus.append(gpus[device.index])
+
+                if visible_gpus:
+                    tf.config.set_visible_devices(visible_gpus, 'GPU')
+                    # Enable memory growth for all GPUs
+                    for gpu in visible_gpus:
+                        try:
+                            tf.config.experimental.set_memory_growth(gpu, True)
+                        except RuntimeError as e:
+                            # Memory growth must be set before GPUs have been initialized
+                            io.log_info(f"Could not set memory growth: {e}")
+
+                nn.tf_default_device_name = f'/{device_config.devices[0].tf_dev_type}:0'
 
             # Initialize framework
             import core.leras.ops
@@ -99,23 +113,6 @@ class nn():
             import core.leras.optimizers
             import core.leras.models
             import core.leras.archis
-            
-            # Configure tensorflow session-config
-            if len(device_config.devices) == 0:
-                config = tf.ConfigProto(device_count={'GPU': 0})
-                nn.tf_default_device_name = '/CPU:0'
-            else:
-                nn.tf_default_device_name = f'/{device_config.devices[0].tf_dev_type}:0'
-                
-                config = tf.ConfigProto()
-                config.gpu_options.visible_device_list = ','.join([str(device.index) for device in device_config.devices])
-                
-            config.gpu_options.force_gpu_compatible = True
-            config.gpu_options.allow_growth = True
-            nn.tf_sess_config = config
-            
-        if nn.tf_sess is None:
-            nn.tf_sess = tf.Session(config=nn.tf_sess_config)
 
         if floatx == "float32":
             floatx = nn.tf.float32
@@ -184,18 +181,15 @@ class nn():
 
     @staticmethod
     def reset_session():
-        if nn.tf is not None:
-            if nn.tf_sess is not None:
-                nn.tf.reset_default_graph()
-                nn.tf_sess.close()
-                nn.tf_sess = nn.tf.Session(config=nn.tf_sess_config)
+        # In TF 2.x eager mode, we don't need to reset sessions
+        # But we keep this for API compatibility
+        pass
 
     @staticmethod
     def close_session():
-        if nn.tf_sess is not None:
-            nn.tf.reset_default_graph()
-            nn.tf_sess.close()
-            nn.tf_sess = None
+        # In TF 2.x eager mode, we don't need to close sessions
+        # But we keep this for API compatibility
+        pass
 
     @staticmethod
     def ask_choose_device_idxs(choose_only_one=False, allow_cpu=True, suggest_best_multi_gpu=False, suggest_all_gpu=False):
@@ -260,7 +254,7 @@ class nn():
         @staticmethod
         def ask_choose_device(*args, **kwargs):
             return nn.DeviceConfig.GPUIndexes( nn.ask_choose_device_idxs(*args,**kwargs) )
-        
+
         def __init__ (self, devices=None):
             devices = devices or []
 

@@ -12,7 +12,6 @@ class ModelBase(nn.Saveable):
         self.built = False
         self.args = args
         self.kwargs = kwargs
-        self.run_placeholders = None
 
     def _build_sub(self, layer, name):
         if isinstance (layer, list):
@@ -29,7 +28,7 @@ class ModelBase(nn.Saveable):
                 layer.name = name
 
             if isinstance (layer, nn.LayerBase):
-                with tf.variable_scope(layer.name):
+                with tf.name_scope(layer.name):
                     layer.build_weights()
             elif isinstance (layer, ModelBase):
                 layer.build()
@@ -41,7 +40,7 @@ class ModelBase(nn.Saveable):
         return  [value for value in lst1+lst2 if (value not in lst1) or (value not in lst2)  ]
 
     def build(self):
-        with tf.variable_scope(self.name):
+        with tf.name_scope(self.name):
 
             current_vars = []
             generator = None
@@ -142,29 +141,6 @@ class ModelBase(nn.Saveable):
     #             result_shapes += [ t.shape.as_list() ]
 
     #         return result_shapes[0] if not_list else result_shapes
-
-    def build_for_run(self, shapes_list):
-        if not isinstance(shapes_list, list):
-            raise ValueError("shapes_list must be a list.")
-
-        self.run_placeholders = []
-        for dtype,sh in shapes_list:
-            self.run_placeholders.append ( tf.placeholder(dtype, sh) )
-
-        self.run_output = self.__call__(self.run_placeholders)
-
-    def run (self, inputs):
-        if self.run_placeholders is None:
-            raise Exception ("Model didn't build for run.")
-
-        if len(inputs) != len(self.run_placeholders):
-            raise ValueError("len(inputs) != self.run_placeholders")
-
-        feed_dict = {}
-        for ph, inp in zip(self.run_placeholders, inputs):
-            feed_dict[ph] = inp
-
-        return nn.tf_sess.run ( self.run_output, feed_dict=feed_dict)
 
     def summary(self):
         layers = self.get_layers()

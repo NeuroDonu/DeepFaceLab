@@ -17,9 +17,26 @@ class FRNorm2D(nn.LayerBase):
         super().__init__(**kwargs)
 
     def build_weights(self):
-        self.weight      = tf.get_variable("weight", (self.in_ch,), dtype=self.dtype, initializer=tf.initializers.ones() )
-        self.bias        = tf.get_variable("bias",   (self.in_ch,), dtype=self.dtype, initializer=tf.initializers.zeros() )
-        self.eps         = tf.get_variable("eps",    (1,), dtype=self.dtype, initializer=tf.initializers.constant(1e-6) )
+        # Create weight variable
+        weight_shape = (self.in_ch,)
+        weight_init = tf.initializers.ones()(weight_shape)
+
+        with tf.name_scope(self.name):
+            self.weight = tf.Variable(weight_init, dtype=self.dtype, trainable=True, name="weight")
+
+        # Create bias variable
+        bias_shape = (self.in_ch,)
+        bias_init = tf.initializers.zeros()(bias_shape)
+
+        with tf.name_scope(self.name):
+            self.bias = tf.Variable(bias_init, dtype=self.dtype, trainable=True, name="bias")
+
+        # Create eps variable
+        eps_shape = (1,)
+        eps_init = tf.initializers.constant(1e-6)(eps_shape)
+
+        with tf.name_scope(self.name):
+            self.eps = tf.Variable(eps_init, dtype=self.dtype, trainable=True, name="eps")
 
     def get_weights(self):
         return [self.weight, self.bias, self.eps]

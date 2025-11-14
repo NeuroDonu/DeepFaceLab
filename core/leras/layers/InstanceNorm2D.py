@@ -12,9 +12,20 @@ class InstanceNorm2D(nn.LayerBase):
         super().__init__(**kwargs)
 
     def build_weights(self):
+        # Create weight variable
         kernel_initializer = tf.initializers.glorot_uniform(dtype=self.dtype)
-        self.weight       = tf.get_variable("weight",   (self.in_ch,), dtype=self.dtype, initializer=kernel_initializer )
-        self.bias         = tf.get_variable("bias",     (self.in_ch,), dtype=self.dtype, initializer=tf.initializers.zeros() )
+        weight_shape = (self.in_ch,)
+        weight_init = kernel_initializer(weight_shape)
+
+        with tf.name_scope(self.name):
+            self.weight = tf.Variable(weight_init, dtype=self.dtype, trainable=True, name="weight")
+
+        # Create bias variable
+        bias_shape = (self.in_ch,)
+        bias_init = tf.initializers.zeros()(bias_shape)
+
+        with tf.name_scope(self.name):
+            self.bias = tf.Variable(bias_init, dtype=self.dtype, trainable=True, name="bias")
 
     def get_weights(self):
         return [self.weight, self.bias]

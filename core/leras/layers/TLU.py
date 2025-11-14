@@ -17,7 +17,12 @@ class TLU(nn.LayerBase):
         super().__init__(**kwargs)
 
     def build_weights(self):
-        self.tau = tf.get_variable("tau", (self.in_ch,), dtype=self.dtype, initializer=tf.initializers.zeros() )
+        # Create tau variable
+        tau_shape = (self.in_ch,)
+        tau_init = tf.initializers.zeros()(tau_shape)
+
+        with tf.name_scope(self.name):
+            self.tau = tf.Variable(tau_init, dtype=self.dtype, trainable=True, name="tau")
 
     def get_weights(self):
         return [self.tau]

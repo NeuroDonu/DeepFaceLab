@@ -17,8 +17,8 @@ class RMSprop(nn.OptimizerBase):
         self.clipnorm = clipnorm
 
         with tf.device('/CPU:0') :
-            with tf.variable_scope(self.name):
-                
+            with tf.name_scope(self.name):
+
                 self.iterations = tf.Variable(0, dtype=tf.int64, name='iters')
 
         self.accumulators_dict = {}
@@ -31,8 +31,8 @@ class RMSprop(nn.OptimizerBase):
         # Initialize here all trainable variables used in training
         e = tf.device('/CPU:0') if vars_on_cpu else None
         if e: e.__enter__()
-        with tf.variable_scope(self.name):
-            accumulators = { v.name : tf.get_variable ( f'acc_{v.name}'.replace(':','_'), v.shape, dtype=v.dtype, initializer=tf.initializers.constant(0.0), trainable=False) for v in trainable_weights }
+        with tf.name_scope(self.name):
+            accumulators = { v.name : tf.Variable(tf.initializers.constant(0.0)(shape=v.shape, dtype=v.dtype), name=f'acc_{v.name}'.replace(':','_'), trainable=False) for v in trainable_weights }
             self.accumulators_dict.update ( accumulators)
 
             if self.lr_dropout != 1.0:
@@ -70,5 +70,5 @@ class RMSprop(nn.OptimizerBase):
             updates.append (state_ops.assign(a, new_a))
             updates.append (state_ops.assign(v, new_v))
 
-        return control_flow_ops.group ( *updates, name=self.name+'_updates')
+        return updates
 nn.RMSprop = RMSprop

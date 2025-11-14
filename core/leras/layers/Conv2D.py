@@ -58,14 +58,27 @@ class Conv2D(nn.LayerBase):
         #if kernel_initializer is None:
         #    kernel_initializer = nn.initializers.ca()
 
-        self.weight = tf.get_variable("weight", (self.kernel_size,self.kernel_size,self.in_ch,self.out_ch), dtype=self.dtype, initializer=kernel_initializer, trainable=self.trainable )
+        # Create weight variable
+        weight_shape = (self.kernel_size, self.kernel_size, self.in_ch, self.out_ch)
+        if kernel_initializer is not None:
+            weight_init = kernel_initializer(weight_shape)
+        else:
+            weight_init = tf.zeros(weight_shape, dtype=self.dtype)
+
+        with tf.name_scope(self.name):
+            self.weight = tf.Variable(weight_init, dtype=self.dtype, trainable=self.trainable, name="weight")
 
         if self.use_bias:
             bias_initializer = self.bias_initializer
             if bias_initializer is None:
                 bias_initializer = tf.initializers.zeros(dtype=self.dtype)
 
-            self.bias = tf.get_variable("bias", (self.out_ch,), dtype=self.dtype, initializer=bias_initializer, trainable=self.trainable )
+            # Create bias variable
+            bias_shape = (self.out_ch,)
+            bias_init = bias_initializer(bias_shape)
+
+            with tf.name_scope(self.name):
+                self.bias = tf.Variable(bias_init, dtype=self.dtype, trainable=self.trainable, name="bias")
 
     def get_weights(self):
         weights = [self.weight]

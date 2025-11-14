@@ -11,7 +11,12 @@ class ScaleAdd(nn.LayerBase):
         super().__init__(**kwargs)
 
     def build_weights(self):
-        self.weight = tf.get_variable("weight",(self.ch,), dtype=self.dtype, initializer=tf.initializers.zeros() )
+        # Create weight variable
+        weight_shape = (self.ch,)
+        weight_init = tf.initializers.zeros()(weight_shape)
+
+        with tf.name_scope(self.name):
+            self.weight = tf.Variable(weight_init, dtype=self.dtype, trainable=True, name="weight")
 
     def get_weights(self):
         return [self.weight]
